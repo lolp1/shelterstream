@@ -1,0 +1,1360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shelter OS (Local)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Base styles to match the React app's dark theme */
+        body {
+            background-color: #171717; /* bg-neutral-900 */
+            color: #e5e5e5; /* text-neutral-200 */
+            font-family: sans-serif; /* font-sans */
+        }
+        
+        /* Ensure inputs/selects in dark mode are styled correctly by default */
+        select, input[type="text"], input[type="date"], input[type="password"], textarea {
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="app-root"></div>
+    
+    <div id="modal-container" class="fixed inset-0 z-50 hidden" data-action="close-modal-backdrop"></div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+
+            // --- 1. APPLICATION STATE ---
+            // A single object to hold the entire application state, similar to React's state.
+            let state = {
+                isAuthenticated: false,
+                loggedInUser: null,
+                clients: [], // This will be our in-memory "database"
+                isLoading: true,
+                view: 'dashboard', // 'dashboard', 'clients'
+                selectedClientId: null,
+                searchTerm: '', // For Client List page
+                dashboardSearchTerm: '', // For Dashboard page
+                lastError: '',
+                isSubmitting: false,
+            };
+
+            // --- 2. LOCAL STORAGE (DATABASE) ---
+            const DB_KEY = 'shelterOSClients';
+
+            const MOCK_CLIENTS_DATA = [
+              { name: 'John Doe', dob: '1985-04-12', gender: 'Male', race: 'White', ethnicity: 'Non-Hispanic or Non-Latino', veteranStatus: 'No', disablingCondition: 'Yes', priorLivingSituation: 'Street Outreach', roomNumber: 'M-101' },
+              { name: 'Jane Smith', dob: '1992-07-21', gender: 'Female', race: 'Black or African American', ethnicity: 'Non-Hispanic or Non-Latino', veteranStatus: 'No', disablingCondition: 'No', priorLivingSituation: 'Friend or Family', roomNumber: 'F-101' },
+              { name: 'Robert Brown', dob: '1978-11-02', gender: 'Male', race: 'White', ethnicity: 'Hispanic or Latino', veteranStatus: 'Yes', disablingCondition: 'Yes', priorLivingSituation: 'Emergency Shelter', roomNumber: 'M-102' },
+              { name: 'Maria Garcia', dob: '1995-01-30', gender: 'Female', race: 'Other', ethnicity: 'Hispanic or Latino', veteranStatus: 'No', disablingCondition: 'No', priorLivingSituation: 'Place not meant for habitation', roomNumber: 'F-102' },
+              { name: 'Michael Johnson', dob: '1965-09-15', gender: 'Male', race: 'White', ethnicity: 'Non-Hispanic or Non-Latino', veteranStatus: 'Yes', disablingCondition: 'No', priorLivingSituation: 'Transitional Housing', roomNumber: 'M-103' },
+              { name: 'Sarah Lee', dob: '2000-03-05', gender: 'Female', race: 'Asian', ethnicity: 'Non-Hispanic or Non-Latino', veteranStatus: 'No', disablingCondition: 'No', priorLivingSituation: 'Friend or Family', roomNumber: 'F-103' },
+              { name: 'David Kim', dob: '1988-06-18', gender: 'Male', race: 'Asian', ethnicity: 'Non-Hispanic or Non-Latino', veteranStatus: 'No', disablingCondition: 'Yes', priorLivingSituation: 'Street Outreach', roomNumber: 'M-104' },
+              { name: 'Emily White', dob: '1990-12-24', gender: 'Female', race: 'White', ethnicity: 'Non-Hispanic or Non-Latino', veteranStatus: 'No', disablingCondition: 'No', priorLivingSituation: 'Emergency Shelter', roomNumber: 'F-104' },
+              { name: 'Daniel Jackson', dob: '1982-02-11', gender: 'Male', race: 'Black or African American', ethnicity: 'Non-Hispanic or Non-Latino', veteranStatus: 'No', disablingCondition: 'Yes', priorLivingSituation: 'Other', roomNumber: 'M-105' },
+              { name: 'Olivia Martinez', dob: '1998-08-08', gender: 'Female', race: 'White', ethnicity: 'Hispanic or Latino', veteranStatus: 'No', disablingCondition: 'No', priorLivingSituation: 'Friend or Family', roomNumber: 'F-105' }
+            ];
+
+            /**
+             * Retrieves all clients from localStorage.
+             * @returns {Array} An array of client objects.
+             */
+            function getClients() {
+                try {
+                    const clientsJson = localStorage.getItem(DB_KEY);
+                    return clientsJson ? JSON.parse(clientsJson) : [];
+                } catch (e) {
+                    console.error("Error reading from localStorage:", e);
+                    return [];
+                }
+            }
+
+            /**
+             * Saves the entire client list to localStorage.
+             * @param {Array} clients - The array of client objects to save.
+             */
+            function saveClients(clients) {
+                try {
+                    // Sort by name before saving
+                    clients.sort((a, b) => a.name.localeCompare(b.name));
+                    state.clients = clients; // Update in-memory state
+                    localStorage.setItem(DB_KEY, JSON.stringify(clients));
+                } catch (e) {
+                    console.error("Error saving to localStorage:", e);
+                }
+            }
+
+            /**
+             * Populates localStorage with mock data if it's empty.
+             * @param {string} username - The username to stamp as 'createdBy'.
+             */
+            function initMockData(username) {
+                let currentClients = getClients();
+                if (currentClients.length === 0) {
+                    console.log("No clients found. Adding mock data...");
+                    const now = new Date().toISOString();
+                    const mockClients = MOCK_CLIENTS_DATA.map(client => ({
+                        ...client,
+                        id: crypto.randomUUID(),
+                        status: "Checked Out",
+                        currentRoom: null,
+                        checkInHistory: [],
+                        caseNotes: [],
+                        goals: [],
+                        createdAt: now,
+                        updatedAt: now,
+                        createdBy: username,
+                    }));
+                    saveClients(mockClients);
+                    return mockClients;
+                }
+                return currentClients;
+            }
+
+            // --- 3. ICON COMPONENTS ---
+            // Functions that return SVG strings.
+            
+            function Icon({ path, className = "w-6 h-6" }) {
+                return `
+                <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    class="${className}"
+                >
+                    ${path}
+                </svg>`;
+            }
+
+            const IconHome = (props = {}) => Icon({ ...props, path: '<path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />' });
+            const IconUsers = (props = {}) => Icon({ ...props, path: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" />' });
+            const IconUserPlus = (props = {}) => Icon({ ...props, path: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><line x1="19" x2="19" y1="8" y2="14" /><line x1="22" x2="16" y1="11" y2="11" />' });
+            const IconLogIn = (props = {}) => Icon({ ...props, path: '<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" /><polyline points="10 17 15 12 10 7" /><line x1="15" x2="3" y1="12" y2="12" />' });
+            const IconLogOut = (props = {}) => Icon({ ...props, path: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" x2="9" y1="12" y2="12" />' });
+            const IconFileText = (props = {}) => Icon({ ...props, path: '<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" /><polyline points="14 2 14 8 20 8" /><line x1="16" x2="8" y1="13" y2="13" /><line x1="16" x2="8" y1="17" y2="17" /><line x1="10" x2="8" y1="9" y2="9" />' });
+            const IconX = (props = {}) => Icon({ ...props, path: '<line x1="18" x2="6" y1="6" y2="18" /><line x1="6" x2="18" y1="6" y2="18" />' });
+            const IconChevronLeft = (props = {}) => Icon({ ...props, path: '<polyline points="15 18 9 12 15 6" />' });
+            const IconSearch = (props = {}) => Icon({ ...props, path: '<circle cx="11" cy="11" r="8" /><line x1="21" x2="16.65" y1="21" y2="16.65" />' });
+            const IconLoader = (props = {}) => Icon({ ...props, className: `w-6 h-6 animate-spin ${props.className || ''}`, path: '<path d="M21 12a9 9 0 1 1-6.219-8.56" />' });
+            const IconFlag = (props = {}) => Icon({ ...props, path: '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" /><line x1="4" x2="4" y1="22" y2="15" />' });
+            const IconChevronDown = (props = {}) => Icon({ ...props, path: '<polyline points="6 9 12 15 18 9" />' });
+            const IconChevronRight = (props = {}) => Icon({ ...props, path: '<polyline points="9 18 15 12 9 6" />' });
+
+            // --- 4. UI PRIMITIVES (HTML String Functions) ---
+
+            /**
+             * Renders a button.
+             * @param {object} props - Properties
+             * @param {string} props.children - Inner HTML of the button.
+             * @param {string} [props.variant='primary'] - 'primary', 'secondary', 'danger', 'ghost'.
+             * @param {string} [props.type='button'] - Button type.
+             * @param {boolean} [props.disabled=false] - Disabled state.
+             * @param {string} [props.size='base'] - 'base', 'icon'.
+             * @param {string} [props.dataAction] - data-action attribute for event delegation.
+             * @param {string} [props.className] - Additional classes.
+             * @param {string} [props.otherAttrs] - Any other HTML attributes.
+             * @returns {string} HTML string for the button.
+             */
+            function Button({ children, variant = 'primary', type = 'button', disabled = false, size = 'base', dataAction = '', className = '', otherAttrs = '' }) {
+                const baseStyle = "inline-flex items-center justify-center font-medium rounded-md transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-neutral-800 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed";
+                
+                const variants = {
+                    primary: "bg-blue-600 hover:bg-blue-500 text-white",
+                    secondary: "bg-neutral-700 hover:bg-neutral-600 text-neutral-100",
+                    danger: "bg-red-600 hover:bg-red-500 text-white",
+                    ghost: "bg-transparent hover:bg-neutral-700 text-neutral-300",
+                };
+                
+                const sizes = {
+                    base: "py-2 px-4 text-sm",
+                    icon: "p-2",
+                };
+
+                return `
+                <button
+                    type="${type}"
+                    ${disabled ? 'disabled' : ''}
+                    class="${baseStyle} ${variants[variant]} ${sizes[size]} ${className}"
+                    ${dataAction ? `data-action="${dataAction}"` : ''}
+                    ${otherAttrs}
+                >
+                    ${children}
+                </button>`;
+            }
+            
+            function FormInput({ label, name, type = "text", value = '', placeholder = '', required = false, otherAttrs = '' }) {
+                return `
+                <div>
+                    <label for="${name}" class="block text-sm font-medium text-neutral-300 mb-1">${label}</label>
+                    <input
+                        type="${type}"
+                        id="${name}"
+                        name="${name}"
+                        value="${value}"
+                        placeholder="${placeholder}"
+                        ${required ? 'required' : ''}
+                        ${otherAttrs}
+                        class="w-full bg-neutral-900 border border-neutral-700 rounded-md p-2 text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                </div>`;
+            }
+
+            function FormSelect({ label, name, value = '', required = false, children, otherAttrs = '' }) {
+                return `
+                <div>
+                    <label for="${name}" class="block text-sm font-medium text-neutral-300 mb-1">${label}</label>
+                    <select
+                        id="${name}"
+                        name="${name}"
+                        ${required ? 'required' : ''}
+                        ${otherAttrs}
+                        class="w-full bg-neutral-900 border border-neutral-700 rounded-md p-2 text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    >
+                        ${children.map(option => 
+                            `<option value="${option.value}" ${option.value === value ? 'selected' : ''}>${option.label}</option>`
+                        ).join('')}
+                    </select>
+                </div>`;
+            }
+            
+            // Helper to generate select options
+            function generateOptions(options, selectedValue) {
+                return options.map(opt => ({ value: opt, label: opt, selected: opt === selectedValue })
+                ).map(opt => `<option value="${opt.value}" ${opt.selected ? 'selected' : ''}>${opt.label}</option>`).join('');
+            }
+
+
+            function FormTextarea({ label, name, value = '', placeholder = '', required = false, rows = 3, otherAttrs = '' }) {
+                return `
+                <div>
+                    <label for="${name}" class="block text-sm font-medium text-neutral-300 mb-1">${label}</label>
+                    <textarea
+                        id="${name}"
+                        name="${name}"
+                        rows="${rows}"
+                        placeholder="${placeholder}"
+                        ${required ? 'required' : ''}
+                        ${otherAttrs}
+                        class="w-full bg-neutral-900 border border-neutral-700 rounded-md p-2 text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    >${value}</textarea>
+                </div>`;
+            }
+
+            // --- 5. MODAL COMPONENTS ---
+
+            /**
+             * Renders the base modal chrome.
+             * @param {object} props
+             * @param {string} props.title - Modal title.
+             * @param {string} props.children - Inner HTML content.
+             * @returns {string} HTML string for the modal.
+             */
+            function Modal({ title, children }) {
+                return `
+                <div id="modal-backdrop" class="fixed inset-0 bg-black/70 backdrop-blur-sm flex justify-center items-center z-50" data-action="close-modal">
+                    <div class="bg-neutral-800 border border-neutral-700 rounded-lg shadow-2xl w-full max-w-lg m-4" onclick="event.stopPropagation()">
+                        <div class="flex justify-between items-center p-4 border-b border-neutral-700">
+                            <h2 class="text-xl font-semibold text-neutral-100">${title}</h2>
+                            ${Button({
+                                children: IconX({ className: "w-5 h-5" }),
+                                variant: "ghost",
+                                size: "icon",
+                                dataAction: "close-modal"
+                            })}
+                        </div>
+                        <div class="p-6">
+                            ${children}
+                        </div>
+                    </div>
+                </div>`;
+            }
+
+            function renderAddClientModal() {
+                const content = `
+                <form data-action="submit-add-client" class="space-y-4">
+                    ${FormInput({ label: "Full Name", name: "name", required: true })}
+                    <div class="grid grid-cols-2 gap-4">
+                        ${FormInput({ label: "Date of Birth", name: "dob", type: "date", required: true })}
+                        ${FormInput({ label: "Assigned Room", name: "roomNumber", placeholder: "e.g., M-101", required: true })}
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        ${FormSelect({ 
+                            label: "Gender", name: "gender", value: "Prefer not to say", 
+                            children: [
+                                { value: "Prefer not to say", label: "Prefer not to say" },
+                                { value: "Female", label: "Female" },
+                                { value: "Male", label: "Male" },
+                                { value: "Transgender", label: "Transgender" },
+                                { value: "Non-binary", label: "Non-binary" },
+                                { value: "Other", label: "Other" },
+                            ]
+                        })}
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        ${FormSelect({ 
+                            label: "Race", name: "race", value: "Prefer not to say",
+                            children: [
+                                { value: "Prefer not to say", label: "Prefer not to say" },
+                                { value: "American Indian or Alaska Native", label: "American Indian or Alaska Native" },
+                                { value: "Asian", label: "Asian" },
+                                { value: "Black or African American", label: "Black or African American" },
+                                { value: "Native Hawaiian or Other Pacific Islander", label: "Native Hawaiian or Other Pacific Islander" },
+                                { value: "White", label: "White" },
+                                { value: "Other", label: "Other" },
+                            ]
+                        })}
+                        ${FormSelect({ 
+                            label: "Ethnicity", name: "ethnicity", value: "Prefer not to say",
+                            children: [
+                                { value: "Prefer not to say", label: "Prefer not to say" },
+                                { value: "Hispanic or Latino", label: "Hispanic or Latino" },
+                                { value: "Non-Hispanic or Non-Latino", label: "Non-Hispanic or Non-Latino" },
+                            ]
+                        })}
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        ${FormSelect({ 
+                            label: "Disabling Condition", name: "disablingCondition", value: "No",
+                            children: [
+                                { value: "No", label: "No" },
+                                { value: "Yes", label: "Yes" },
+                                { value: "Prefer not to say", label: "Prefer not to say" },
+                            ]
+                        })}
+                        ${FormSelect({ 
+                            label: "Prior Living Situation", name: "priorLivingSituation", value: "Other",
+                            children: [
+                                { value: "Other", label: "Other" },
+                                { value: "Street Outreach", label: "Street Outreach" },
+                                { value: "Emergency Shelter", label: "Emergency Shelter" },
+                                { value: "Place not meant for habitation", label: "Place not meant for habitation" },
+                                { value: "Transitional Housing", label: "Transitional Housing" },
+                                { value: "Friend or Family", label: "Friend or Family" },
+                            ]
+                        })}
+                    </div>
+                    <div class="flex justify-end space-x-3 pt-4">
+                        ${Button({ children: "Cancel", type: "button", variant: "secondary", dataAction: "close-modal", disabled: state.isSubmitting })}
+                        ${Button({ 
+                            children: state.isSubmitting ? IconLoader({ className: "w-5 h-5" }) : 'Add Client', 
+                            type: "submit", 
+                            variant: "primary", 
+                            disabled: state.isSubmitting 
+                        })}
+                    </div>
+                </form>`;
+                return Modal({ title: "Add New Client", children: content });
+            }
+            
+            function renderAddNoteModal(clientName) {
+                const content = `
+                <form data-action="submit-add-note" data-client-id="${state.selectedClientId}" class="space-y-4">
+                    ${FormTextarea({ 
+                        label: "Case Note", 
+                        name: "note", 
+                        rows: 5, 
+                        placeholder: "Enter case note details...", 
+                        required: true 
+                    })}
+                    <div class="flex justify-end space-x-3 pt-4">
+                        ${Button({ children: "Cancel", type: "button", variant: "secondary", dataAction: "close-modal", disabled: state.isSubmitting })}
+                        ${Button({ 
+                            children: state.isSubmitting ? IconLoader({ className: "w-5 h-5" }) : 'Save Note', 
+                            type: "submit", 
+                            variant: "primary", 
+                            disabled: state.isSubmitting 
+                        })}
+                    </div>
+                </form>`;
+                return Modal({ title: `Add Note for: ${clientName}`, children: content });
+            }
+            
+            function renderAddGoalModal(clientName) {
+                const content = `
+                <form data-action="submit-add-goal" data-client-id="${state.selectedClientId}" class="space-y-4">
+                    ${FormInput({ 
+                        label: "Goal Title", 
+                        name: "title", 
+                        placeholder: "e.g., Secure stable housing", 
+                        required: true 
+                    })}
+                    ${FormSelect({ 
+                        label: "Status", name: "status", value: "In Progress",
+                        children: [
+                            { value: "In Progress", label: "In Progress" },
+                            { value: "Completed", label: "Completed" },
+                            { value: "On Hold", label: "On Hold" },
+                        ]
+                    })}
+                    <div class="flex justify-end space-x-3 pt-4">
+                        ${Button({ children: "Cancel", type: "button", variant: "secondary", dataAction: "close-modal", disabled: state.isSubmitting })}
+                        ${Button({ 
+                            children: state.isSubmitting ? IconLoader({ className: "w-5 h-5" }) : 'Add Goal', 
+                            type: "submit", 
+                            variant: "primary", 
+                            disabled: state.isSubmitting 
+                        })}
+                    </div>
+                </form>`;
+                return Modal({ title: `Add Goal for: ${clientName}`, children: content });
+            }
+            
+            function renderAddGoalNoteModal(clientId, goalId, goalTitle) {
+                const content = `
+                <form data-action="submit-add-goal-note" data-client-id="${clientId}" data-goal-id="${goalId}" class="space-y-4">
+                    ${FormTextarea({ 
+                        label: "Progress Note", 
+                        name: "noteText", 
+                        rows: 3, 
+                        placeholder: "Report progress...", 
+                        required: true 
+                    })}
+                    <div class="flex justify-end space-x-3 pt-4">
+                        ${Button({ children: "Cancel", type: "button", variant: "secondary", dataAction: "close-modal", disabled: state.isSubmitting })}
+                        ${Button({ 
+                            children: state.isSubmitting ? IconLoader({ className: "w-5 h-5" }) : 'Add Note', 
+                            type: "submit", 
+                            variant: "primary", 
+                            disabled: state.isSubmitting 
+                        })}
+                    </div>
+                </form>`;
+                return Modal({ title: `Add Note for Goal: ${goalTitle}`, children: content });
+            }
+            
+            function renderAlertModal(message) {
+                 const content = `
+                    <p class="text-neutral-200 mb-6">${message}</p>
+                    <div class="flex justify-end">
+                        ${Button({ children: "OK", variant: "primary", dataAction: "close-modal" })}
+                    </div>`;
+                return Modal({ title: "Alert", children: content });
+            }
+
+            // --- 6. VIEW/COMPONENT RENDERERS ---
+
+            function renderLoginScreen() {
+                return `
+                <div class="flex h-screen w-full bg-neutral-900 text-neutral-200 font-sans items-center justify-center p-4">
+                    <div class="w-full max-w-sm">
+                        <form data-action="login" class="bg-neutral-800 border border-neutral-700 shadow-2xl rounded-lg p-8 space-y-6">
+                            <h1 class="text-2xl font-bold text-center text-white mb-2">Shelter OS</h1>
+                            <p class="text-center text-neutral-400 text-sm">Please sign in to continue</p>
+                            
+                            ${FormInput({ 
+                                label: "Username", 
+                                name: "username", 
+                                required: true, 
+                                value: "admin", 
+                                otherAttrs: 'autocomplete="username"' 
+                            })}
+                            
+                            ${FormInput({ 
+                                label: "Password", 
+                                name: "password", 
+                                type: "password", 
+                                required: true, 
+                                value: "xxcoplpp", 
+                                otherAttrs: 'autocomplete="current-password"' 
+                            })}
+                            
+                            ${state.lastError ? `<p class="text-sm text-red-400 text-center">${state.lastError}</p>` : ''}
+                            
+                            ${Button({ 
+                                type: "submit", 
+                                variant: "primary", 
+                                disabled: state.isSubmitting,
+                                className: "w-full",
+                                children: state.isSubmitting ? IconLoader({ className: "w-5 h-5" }) : 'Sign In'
+                            })}
+                        </form>
+                    </div>
+                </div>`;
+            }
+
+            function renderMainApp() {
+                const selectedClient = state.clients.find(c => c.id === state.selectedClientId);
+                
+                return `
+                <div class="flex h-screen w-full bg-neutral-900 text-neutral-200 font-sans">
+                    ${renderSidebar()}
+                    <main class="flex-1 flex flex-col overflow-hidden">
+                        ${renderTopBar(selectedClient)}
+                        <div class="flex-1 overflow-y-auto p-4 md:p-8">
+                            ${renderMainContent(selectedClient)}
+                        </div>
+                    </main>
+                </div>`;
+            }
+
+            function renderSidebar() {
+                const NavButton = ({ icon, label, isActive, dataAction, dataView }) => `
+                    <button
+                        data-action="${dataAction}"
+                        data-view="${dataView}"
+                        class="flex items-center w-full px-4 py-3 rounded-md text-sm font-medium transition-colors ${
+                            isActive
+                                ? 'bg-blue-600 text-white'
+                                : 'text-neutral-300 hover:bg-neutral-700 hover:text-white'
+                        }"
+                    >
+                        ${icon}
+                        <span class="ml-3">${label}</span>
+                    </button>`;
+
+                return `
+                <nav class="w-64 flex-shrink-0 bg-neutral-800 border-r border-neutral-700 p-4 flex flex-col space-y-2">
+                    <h1 class="text-xl font-bold text-white px-2 mb-4">Shelter OS</h1>
+                    ${NavButton({
+                        icon: IconHome({ className: "w-5 h-5" }),
+                        label: "Dashboard",
+                        isActive: state.view === 'dashboard',
+                        dataAction: "set-view",
+                        dataView: "dashboard"
+                    })}
+                    ${NavButton({
+                        icon: IconUsers({ className: "w-5 h-s" }),
+                        label: "Clients",
+                        isActive: state.view === 'clients',
+                        dataAction: "set-view",
+                        dataView: "clients"
+                    })}
+                    <div class="pt-2">
+                        ${Button({
+                            children: `${IconUserPlus({ className: "w-5 h-5 mr-2" })} Add New Client`,
+                            variant: "secondary",
+                            className: "w-full",
+                            dataAction: "open-add-client-modal"
+                        })}
+                    </div>
+                </nav>`;
+            }
+
+            function renderTopBar(selectedClient) {
+                if (state.view === 'clients' && !selectedClient) {
+                    return `
+                    <div class="flex-shrink-0 bg-neutral-900/80 backdrop-blur-sm border-b border-neutral-700 p-4">
+                        <div class="relative max-w-md">
+                            <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                ${IconSearch({ className: "w-5 h-5 text-neutral-500" })}
+                            </div>
+                            <input
+                                type="text"
+                                placeholder="Search clients by name..."
+                                value="${state.searchTerm}"
+                                data-action="search-clients"
+                                class="w-full bg-neutral-800 border border-neutral-700 rounded-md py-2 pl-10 pr-4 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            />
+                        </div>
+                    </div>`;
+                }
+                return ''; // No top bar for Dashboard or ClientDetails
+            }
+
+            function renderMainContent(selectedClient) {
+                if (state.isLoading) {
+                    return `<div class="flex justify-center items-center h-full">${IconLoader({ className: "w-12 h-12" })}</div>`;
+                }
+
+                if (state.view === 'dashboard') {
+                    return renderDashboard();
+                }
+
+                if (state.view === 'clients') {
+                    if (selectedClient) {
+                        return renderClientDetails(selectedClient);
+                    } else {
+                        return renderClientList();
+                    }
+                }
+                return `<div>Unknown view: ${state.view}</div>`;
+            }
+
+            function renderDashboard() {
+                const { clients, dashboardSearchTerm } = state;
+                const totalClients = clients.length;
+                const checkedInClients = clients.filter(c => c.status === 'Checked In');
+                const checkedOutClients = clients.filter(c => c.status === 'Checked Out');
+                const checkedInCount = checkedInClients.length;
+
+                const filterFn = client => 
+                    client.name.toLowerCase().includes(dashboardSearchTerm.toLowerCase()) ||
+                    (client.currentRoom && client.currentRoom.toLowerCase().includes(dashboardSearchTerm.toLowerCase())) ||
+                    (client.roomNumber && client.roomNumber.toLowerCase().includes(dashboardSearchTerm.toLowerCase()));
+
+                const filteredCheckedInClients = checkedInClients.filter(filterFn);
+                const filteredCheckedOutClients = checkedOutClients.filter(filterFn);
+                
+                const StatCard = ({ title, value, icon }) => `
+                    <div class="bg-neutral-800 border border-neutral-700 rounded-lg p-6 flex items-center justify-between">
+                        <div>
+                            <p class="text-sm font-medium text-neutral-400">${title}</p>
+                            <p class="text-3xl font-bold text-neutral-100">${value}</p>
+                        </div>
+                        <div class="text-blue-400">
+                            ${icon}
+                        </div>
+                    </div>`;
+                
+                const renderClientListSection = (title, clientList) => `
+                    <div class="bg-neutral-800 border border-neutral-700 rounded-lg shadow-lg overflow-hidden">
+                        <h2 class="text-xl font-semibold text-neutral-100 p-4 border-b border-neutral-700">
+                            ${title}
+                        </h2>
+                        ${clientList.length > 0 ? `
+                            <ul class="divide-y divide-neutral-700">
+                                ${clientList.map(client => `
+                                    <li 
+                                        data-action="select-client" 
+                                        data-client-id="${client.id}"
+                                        class="flex justify-between items-center p-4 hover:bg-neutral-700/50 cursor-pointer transition-colors"
+                                    >
+                                        <div>
+                                            <p class="font-medium text-neutral-100">${client.name}</p>
+                                            <p class="text-sm text-neutral-400">${client.gender}, DOB: ${client.dob}</p>
+                                        </div>
+                                        <div class="text-right">
+                                            <p class="font-medium ${client.status === 'Checked In' ? 'text-blue-300' : 'text-neutral-300'}">${client.currentRoom || client.roomNumber}</p>
+                                            <p class="text-sm text-neutral-400">${client.status}</p>
+                                        </div>
+                                    </li>
+                                `).join('')}
+                            </ul>
+                        ` : `
+                            <p class="p-4 text-neutral-400">No clients match this criteria.</p>
+                        `}
+                    </div>`;
+
+                return `
+                <div class="space-y-6">
+                    <h1 class="text-3xl font-bold text-neutral-100">Dashboard</h1>
+                    
+                    <div class="relative max-w-md">
+                        <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                            ${IconSearch({ className: "w-5 h-5 text-neutral-500" })}
+                        </div>
+                        <input
+                            type="text"
+                            placeholder="Search by name or room..."
+                            value="${dashboardSearchTerm}"
+                            data-action="search-dashboard"
+                            class="w-full bg-neutral-800 border border-neutral-700 rounded-md py-2 pl-10 pr-4 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        />
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        ${StatCard({ title: "Total Clients", value: totalClients, icon: IconUsers({ className: "w-8 h-8" }) })}
+                        ${StatCard({ title: "Currently Checked In", value: checkedInCount, icon: IconLogIn({ className: "w-8 h-8" }) })}
+                    </div>
+
+                    ${renderClientListSection("Currently Checked In", filteredCheckedInClients)}
+                    ${renderClientListSection("Currently Checked Out", filteredCheckedOutClients)}
+                </div>`;
+            }
+
+            function renderClientList() {
+                const filteredClients = state.clients.filter(client => 
+                    client.name.toLowerCase().includes(state.searchTerm.toLowerCase())
+                );
+                
+                return `
+                <div class="bg-neutral-800 border border-neutral-700 rounded-lg shadow-lg overflow-hidden">
+                    <h1 class="text-xl font-semibold text-neutral-100 p-4 border-b border-neutral-700">All Clients (${filteredClients.length})</h1>
+                    ${filteredClients.length > 0 ? `
+                        <ul class="divide-y divide-neutral-700">
+                            ${filteredClients.map(client => `
+                                <li 
+                                    data-action="select-client" 
+                                    data-client-id="${client.id}"
+                                    class="flex justify-between items-center p-4 hover:bg-neutral-700/50 cursor-pointer transition-colors"
+                                >
+                                    <div>
+                                        <p class="font-medium text-neutral-100">${client.name}</p>
+                                        <p class="text-sm text-neutral-400">${client.gender}, DOB: ${client.dob}</p>
+                                    </div>
+                                    <div>
+                                        ${client.status === 'Checked In' ? `
+                                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-800 text-green-200">
+                                                Checked In (${client.currentRoom})
+                                            </span>
+                                        ` : `
+                                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-neutral-700 text-neutral-300">
+                                                Checked Out
+                                            </span>
+                                        `}
+                                    </div>
+                                </li>
+                            `).join('')}
+                        </ul>
+                    ` : `
+                        <p class="p-4 text-neutral-400">No clients found.</p>
+                    `}
+                </div>`;
+            }
+
+            function renderClientDetails(client) {
+                const InfoItem = ({ label, value }) => `
+                    <div>
+                        <p class="text-sm font-medium text-neutral-400">${label}</p>
+                        <p class="text-base text-neutral-100">${value || 'N/A'}</p>
+                    </div>`;
+                
+                return `
+                <div class="space-y-6">
+                    <div class="flex justify-between items-center">
+                        <div class="flex items-center gap-4">
+                            ${Button({
+                                children: `${IconChevronLeft({ className: "w-5 h-5 mr-1" })} Back`,
+                                variant: "secondary",
+                                dataAction: "deselect-client"
+                            })}
+                            <div>
+                                <h1 class="text-3xl font-bold text-neutral-100">${client.name}</h1>
+                                <p class="text-neutral-400">
+                                    ${client.status === 'Checked In'
+                                        ? `Checked In (Room: ${client.currentRoom})`
+                                        : "Checked Out"}
+                                </p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-3">
+                            ${client.status === 'Checked Out' ? 
+                                Button({
+                                    children: `${IconLogIn({ className: "w-5 h-5 mr-2" })} Check In`,
+                                    variant: "primary",
+                                    dataAction: "check-in",
+                                    otherAttrs: `data-client-id="${client.id}"`
+                                }) :
+                                Button({
+                                    children: `${IconLogOut({ className: "w-5 h-5 mr-2" })} Check Out`,
+                                    variant: "danger",
+                                    dataAction: "check-out",
+                                    otherAttrs: `data-client-id="${client.id}"`
+                                })
+                            }
+                        </div>
+                    </div>
+                    
+                    <div class="bg-neutral-800 border border-neutral-700 rounded-lg shadow-lg p-6">
+                        <h2 class="text-xl font-semibold text-neutral-100 mb-4">Client Information</h2>
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            ${InfoItem({ label: "Date of Birth", value: client.dob })}
+                            ${InfoItem({ label: "Gender", value: client.gender })}
+                            ${InfoItem({ label: "Assigned Room", value: client.roomNumber })}
+                            ${InfoItem({ label: "Race", value: client.race })}
+                            ${InfoItem({ label: "Ethnicity", value: client.ethnicity })}
+                            ${InfoItem({ label: "Veteran Status", value: client.veteranStatus })}
+                            ${InfoItem({ label: "Disabling Condition", value: client.disablingCondition })}
+                            ${InfoItem({ label: "Prior Living Situation", value: client.priorLivingSituation })}
+                        </div>
+                    </div>
+
+                    <div class="bg-neutral-800 border border-neutral-700 rounded-lg shadow-lg">
+                        <div class="flex justify-between items-center p-4 border-b border-neutral-700">
+                            <h2 class="text-xl font-semibold text-neutral-100">Case Notes</h2>
+                            ${Button({
+                                children: `${IconFileText({ className: "w-5 h-5 mr-2" })} Add Note`,
+                                variant: "secondary",
+                                dataAction: "open-add-note-modal",
+                                otherAttrs: `data-client-name="${client.name}"`
+                            })}
+                        </div>
+                        ${renderCaseNotesList(client.caseNotes)}
+                    </div>
+
+                    <div class="bg-neutral-800 border border-neutral-700 rounded-lg shadow-lg">
+                        <div class="flex justify-between items-center p-4 border-b border-neutral-700">
+                            <h2 class="text-xl font-semibold text-neutral-100">Goals</h2>
+                            ${Button({
+                                children: `${IconFlag({ className: "w-5 h-5 mr-2" })} Add Goal`,
+                                variant: "secondary",
+                                dataAction: "open-add-goal-modal",
+                                otherAttrs: `data-client-name="${client.name}"`
+                            })}
+                        </div>
+                        ${renderGoalsList(client.goals, client.id)}
+                    </div>
+
+                    <div class="bg-neutral-800 border border-neutral-700 rounded-lg shadow-lg">
+                        <h2 class="text-xl font-semibold text-neutral-100 p-4 border-b border-neutral-700">Stay History</h2>
+                        ${renderCheckInHistory(client.checkInHistory)}
+                    </div>
+                </div>`;
+            }
+
+            function renderCaseNotesList(notes) {
+                if (!notes || notes.length === 0) {
+                    return `<p class="p-4 text-neutral-400">No case notes found.</p>`;
+                }
+                // Sort descending by date
+                const sortedNotes = [...notes].sort((a, b) => new Date(b.date) - new Date(a.date));
+                
+                return `
+                <ul class="divide-y divide-neutral-700 max-h-96 overflow-y-auto">
+                    ${sortedNotes.map(note => `
+                        <li class="p-4">
+                            <p class="text-sm text-neutral-100 whitespace-pre-wrap">${note.note}</p>
+                            <p class="text-xs text-neutral-400 mt-2">
+                                ${new Date(note.date).toLocaleString()} - By: <span class="font-mono">${note.staffId}</span>
+                            </p>
+                        </li>
+                    `).join('')}
+                </ul>`;
+            }
+            
+            function renderGoalsList(goals, clientId) {
+                if (!goals || goals.length === 0) {
+                    return `<p class="p-4 text-neutral-400">No goals set for this client.</p>`;
+                }
+                // Sort by creation date, oldest first
+                const sortedGoals = [...goals].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+                
+                return `
+                <ul class="divide-y divide-neutral-700">
+                    ${sortedGoals.map(goal => renderGoalItem(goal, clientId)).join('')}
+                </ul>`;
+            }
+            
+            function renderGoalItem(goal, clientId) {
+                const statusColors = {
+                    'In Progress': 'text-blue-300 bg-blue-900/50',
+                    'Completed': 'text-green-300 bg-green-900/50',
+                    'On Hold': 'text-yellow-300 bg-yellow-900/50',
+                };
+                
+                // Sort notes descending by date
+                const sortedNotes = (goal.notes || []).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+                
+                // We need a way to track "isExpanded" without React state.
+                // We can use a data-attribute on the element itself and check it on click.
+                return `
+                <li class="p-4" id="goal-item-${goal.id}">
+                    <div class="flex justify-between items-center">
+                        <div class="flex-1">
+                            <p class="font-medium text-neutral-100">${goal.title}</p>
+                            <p class="text-xs text-neutral-400 mt-1">
+                                (Added by: <span class="font-mono">${goal.createdBy || 'N/A'}</span>)
+                            </p>
+                            <div class="flex items-center gap-2 mt-2">
+                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusColors[goal.status] || 'text-neutral-300 bg-neutral-700'}">
+                                    ${goal.status}
+                                </span>
+                                <select 
+                                    name="status" 
+                                    data-action="update-goal-status"
+                                    data-client-id="${clientId}"
+                                    data-goal-id="${goal.id}"
+                                    class="text-xs !p-1 bg-neutral-700 border-neutral-600 rounded text-neutral-100 focus:ring-blue-500"
+                                >
+                                    ${generateOptions(['In Progress', 'Completed', 'On Hold'], goal.status)}
+                                </select>
+                            </div>
+                        </div>
+                        <button 
+                            data-action="toggle-goal-details" 
+                            data-target-id="goal-details-${goal.id}" 
+                            data-goal-id="${goal.id}"
+                            class="p-2 bg-transparent hover:bg-neutral-700 text-neutral-300 rounded-md"
+                        >
+                            ${IconChevronRight({ className: "w-5 h-5 goal-icon-chevron" })}
+                        </button>
+                    </div>
+                    
+                    <div id="goal-details-${goal.id}" class="mt-4 pl-4 border-l-2 border-neutral-700 space-y-4 hidden">
+                        <h4 class="font-semibold text-neutral-200">Progress Notes</h4>
+                        ${sortedNotes.length > 0 ? `
+                            <ul class="space-y-3 max-h-60 overflow-y-auto">
+                                ${sortedNotes.map(note => `
+                                    <li key="${note.id}" class="text-sm">
+                                        <p class="text-neutral-200 whitespace-pre-wrap">${note.text}</p>
+                                        <p class="text-xs text-neutral-400 mt-1">
+                                            ${new Date(note.createdAt).toLocaleString()} - By: <span class="font-mono">${note.staffId}</span>
+                                        </p>
+                                    </li>
+                                `).join('')}
+                            </ul>
+                        ` : `
+                            <p class="text-sm text-neutral-400">No progress notes for this goal yet.</p>
+                        `}
+                        
+                        <form data-action="submit-inline-goal-note" data-client-id="${clientId}" data-goal-id="${goal.id}" class="space-y-2">
+                            <textarea
+                                name="noteText"
+                                rows="3"
+                                placeholder="Report progress..."
+                                required
+                                class="w-full bg-neutral-900 border border-neutral-700 rounded-md p-2 text-neutral-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            ></textarea>
+                            <div class="flex justify-end">
+                                ${Button({
+                                    children: 'Add Note', 
+                                    type: "submit", 
+                                    variant: "secondary", 
+                                    size: "base",
+                                    disabled: state.isSubmitting
+                                })}
+                            </div>
+                        </form>
+                    </div>
+                </li>`;
+            }
+
+            function renderCheckInHistory(history) {
+                if (!history || history.length === 0) {
+                    return `<p class="p-4 text-neutral-400">No stay history found.</p>`;
+                }
+                // Sort descending by check-in time
+                const sortedHistory = [...history].sort((a, b) => new Date(b.checkInTime) - new Date(a.checkInTime));
+                
+                return `
+                <ul class="divide-y divide-neutral-700 max-h-96 overflow-y-auto">
+                    ${sortedHistory.map(entry => `
+                        <li class="p-4">
+                            <p class="font-medium text-neutral-100">Room: ${entry.room}</p>
+                            <p class="text-sm ${!entry.checkOutTime ? 'text-green-400' : 'text-neutral-400'}">
+                                Checked In: ${new Date(entry.checkInTime).toLocaleString()}
+                                <span class="text-neutral-400 text-xs"> (By: <span class="font-mono">${entry.checkedInBy || 'N/A'}</span>)</span>
+                            </p>
+                            <p class="text-sm ${entry.checkOutTime ? 'text-red-500' : 'text-green-400'}">
+                                ${entry.checkOutTime 
+                                    ? `Checked Out: ${new Date(entry.checkOutTime).toLocaleString()}` 
+                                    : 'Currently Checked In'}
+                                ${entry.checkOutTime ? `
+                                    <span class="text-neutral-400 text-xs"> (By: <span class="font-mono">${entry.checkedOutBy || 'N/A'}</span>)</span>
+                                ` : ''}
+                            </p>
+                        </li>
+                    `).join('')}
+                </ul>`;
+            }
+
+            // --- 7. APPLICATION LOGIC & HANDLERS ---
+            
+            /**
+             * The main render function. Call this after any state change.
+             */
+            function render() {
+                const appRoot = document.getElementById('app-root');
+                const modalContainer = document.getElementById('modal-container');
+                
+                // Save scroll position
+                const activeElement = document.activeElement;
+                const activeElementId = activeElement ? activeElement.id : null;
+                const scrollPositions = {};
+                document.querySelectorAll('.overflow-y-auto').forEach(el => {
+                    scrollPositions[el.id || el.className] = el.scrollTop;
+                });
+                
+                // Render main content
+                if (!state.isAuthenticated) {
+                    appRoot.innerHTML = renderLoginScreen();
+                } else {
+                    appRoot.innerHTML = renderMainApp();
+                }
+
+                // Render modals (if any)
+                // This assumes modal state is handled by openModal/closeModal functions
+                // and not by the main `render` function, which is simpler.
+                
+                // Restore scroll positions
+                document.querySelectorAll('.overflow-y-auto').forEach(el => {
+                    const pos = scrollPositions[el.id || el.className];
+                    if (pos) {
+                        el.scrollTop = pos;
+                    }
+                });
+
+                // Restore focus
+                if (activeElementId) {
+                    const elToFocus = document.getElementById(activeElementId);
+                    if (elToFocus) {
+                        elToFocus.focus();
+                    }
+                }
+            }
+            
+            function openModal(html) {
+                const modalContainer = document.getElementById('modal-container');
+                modalContainer.innerHTML = html;
+                modalContainer.classList.remove('hidden');
+            }
+            
+            function closeModal() {
+                const modalContainer = document.getElementById('modal-container');
+                modalContainer.innerHTML = '';
+                modalContainer.classList.add('hidden');
+                state.isSubmitting = false; // Always reset submitting state on close
+            }
+
+            // --- Data Mutation Handlers ---
+            // These functions modify the `state.clients` array,
+            // save it to localStorage, and then call `render()`.
+
+            function handleLogin(username, password) {
+                state.isSubmitting = true;
+                state.lastError = '';
+                render();
+
+                setTimeout(() => { // Simulate network delay
+                    if (username === 'admin' && password === 'xxcoplpp') {
+                        state.isAuthenticated = true;
+                        state.loggedInUser = username;
+                        state.isSubmitting = false;
+                        state.isLoading = true;
+                        state.clients = initMockData(username); // Load data
+                        state.isLoading = false;
+                        render();
+                    } else {
+                        state.isSubmitting = false;
+                        state.lastError = 'Invalid username or password.';
+                        render();
+                    }
+                }, 500);
+            }
+
+            function handleAddNewClient(formData) {
+                state.isSubmitting = true;
+                openModal(renderAddClientModal()); // Re-render modal to show loader
+                
+                const now = new Date().toISOString();
+                const newClient = {
+                    ...formData,
+                    id: crypto.randomUUID(),
+                    status: "Checked Out",
+                    currentRoom: null,
+                    checkInHistory: [],
+                    caseNotes: [],
+                    goals: [],
+                    createdAt: now,
+                    updatedAt: now,
+                    createdBy: state.loggedInUser,
+                };
+                
+                const currentClients = getClients();
+                currentClients.push(newClient);
+                saveClients(currentClients);
+                
+                state.isSubmitting = false;
+                closeModal();
+                render();
+            }
+            
+            function handleCheckIn(clientId) {
+                const currentClients = getClients();
+                const client = currentClients.find(c => c.id === clientId);
+                if (!client) return;
+                
+                if (!client.roomNumber) {
+                    openModal(renderAlertModal('This client has no assigned room number. Please add one to their profile.'));
+                    return;
+                }
+                
+                const newCheckIn = {
+                    checkInTime: new Date().toISOString(),
+                    checkOutTime: null,
+                    room: client.roomNumber,
+                    checkedInBy: state.loggedInUser,
+                };
+                
+                client.status = "Checked In";
+                client.currentRoom = client.roomNumber;
+                client.checkInHistory.push(newCheckIn);
+                client.updatedAt = new Date().toISOString();
+                
+                saveClients(currentClients);
+                state.selectedClientId = clientId; // Keep client selected
+                render();
+            }
+            
+            function handleCheckOut(clientId) {
+                const currentClients = getClients();
+                const client = currentClients.find(c => c.id === clientId);
+                if (!client) return;
+                
+                // Find the latest active check-in
+                let foundActiveCheckIn = false;
+                for (let i = client.checkInHistory.length - 1; i >= 0; i--) {
+                    if (!client.checkInHistory[i].checkOutTime) {
+                        client.checkInHistory[i].checkOutTime = new Date().toISOString();
+                        client.checkInHistory[i].checkedOutBy = state.loggedInUser;
+                        foundActiveCheckIn = true;
+                        break;
+                    }
+                }
+                
+                if (!foundActiveCheckIn) {
+                    console.warn(`No active check-in found for client ${client.id} to check out.`);
+                }
+                
+                client.status = "Checked Out";
+                client.currentRoom = null;
+                client.updatedAt = new Date().toISOString();
+                
+                saveClients(currentClients);
+                state.selectedClientId = clientId; // Keep client selected
+                render();
+            }
+            
+            function handleAddCaseNote(clientId, noteText) {
+                state.isSubmitting = true;
+                const client = state.clients.find(c => c.id === clientId);
+                openModal(renderAddNoteModal(client.name)); // Re-render modal to show loader
+
+                const currentClients = getClients();
+                const clientToUpdate = currentClients.find(c => c.id === clientId);
+                if (!clientToUpdate) return;
+                
+                const newNote = {
+                    date: new Date().toISOString(),
+                    note: noteText,
+                    staffId: state.loggedInUser,
+                };
+                
+                clientToUpdate.caseNotes.push(newNote);
+                clientToUpdate.updatedAt = new Date().toISOString();
+                
+                saveClients(currentClients);
+                
+                state.isSubmitting = false;
+                closeModal();
+                render();
+            }
+            
+            function handleAddNewGoal(clientId, goalData) {
+                state.isSubmitting = true;
+                const client = state.clients.find(c => c.id === clientId);
+                openModal(renderAddGoalModal(client.name)); // Re-render modal
+                
+                const currentClients = getClients();
+                const clientToUpdate = currentClients.find(c => c.id === clientId);
+                if (!clientToUpdate) return;
+                
+                const newGoal = {
+                    id: crypto.randomUUID(),
+                    title: goalData.title,
+                    status: goalData.status,
+                    createdAt: new Date().toISOString(),
+                    createdBy: state.loggedInUser,
+                    notes: [],
+                };
+                
+                clientToUpdate.goals.push(newGoal);
+                clientToUpdate.updatedAt = new Date().toISOString();
+                
+                saveClients(currentClients);
+                
+                state.isSubmitting = false;
+                closeModal();
+                render();
+            }
+
+            function handleAddGoalNote(clientId, goalId, noteText) {
+                state.isSubmitting = true;
+                render(); // Re-render to show loader on inline button
+                
+                const currentClients = getClients();
+                const client = currentClients.find(c => c.id === clientId);
+                if (!client) return;
+                
+                const goal = client.goals.find(g => g.id === goalId);
+                if (!goal) return;
+                
+                const newNote = {
+                    id: crypto.randomUUID(),
+                    text: noteText,
+                    createdAt: new Date().toISOString(),
+                    staffId: state.loggedInUser,
+                };
+                
+                if (!Array.isArray(goal.notes)) {
+                    goal.notes = [];
+                }
+                goal.notes.push(newNote);
+                client.updatedAt = new Date().toISOString();
+                
+                saveClients(currentClients);
+                
+                state.isSubmitting = false;
+                render(); // Re-render to show new note
+            }
+            
+            function handleUpdateGoalStatus(clientId, goalId, newStatus) {
+                const currentClients = getClients();
+                const client = currentClients.find(c => c.id === clientId);
+                if (!client) return;
+                
+                const goal = client.goals.find(g => g.id === goalId);
+                if (!goal) return;
+                
+                if (goal.status === newStatus) return; // No change
+                
+                goal.status = newStatus;
+                
+                // Add a log note for the status change
+                const newNote = {
+                    id: crypto.randomUUID(),
+                    text: `Status changed to: ${newStatus}`,
+                    createdAt: new Date().toISOString(),
+                    staffId: state.loggedInUser,
+                };
+                
+                if (!Array.isArray(goal.notes)) {
+                    goal.notes = [];
+                }
+                goal.notes.push(newNote);
+                client.updatedAt = new Date().toISOString();
+                
+                saveClients(currentClients);
+                render(); // Re-render to show new status
+            }
+
+            // --- 8. EVENT LISTENERS (Event Delegation) ---
+            
+            const appRoot = document.getElementById('app-root');
+            const modalContainer = document.getElementById('modal-container');
+
+            // --- Main App Listeners ---
+            
+            appRoot.addEventListener('submit', (e) => {
+                e.preventDefault();
+                const form = e.target;
+                const formData = new FormData(form);
+                const data = Object.fromEntries(formData.entries());
+                const action = form.dataset.action;
+                
+                if (action === 'login') {
+                    handleLogin(data.username, data.password);
+                }
+                
+                if (action === 'submit-inline-goal-note') {
+                    const clientId = form.dataset.clientId;
+                    const goalId = form.dataset.goalId;
+                    handleAddGoalNote(clientId, goalId, data.noteText);
+                }
+            });
+
+            appRoot.addEventListener('click', (e) => {
+                const target = e.target.closest('[data-action]');
+                if (!target) return;
+                
+                const { action, clientId, clientName, view, targetId, goalId } = target.dataset;
+
+                switch (action) {
+                    case 'set-view':
+                        state.view = view;
+                        state.selectedClientId = null;
+                        render();
+                        break;
+                    case 'select-client':
+                        state.selectedClientId = clientId;
+                        state.view = 'clients'; // Force view
+                        render();
+                        break;
+                    case 'deselect-client':
+                        state.selectedClientId = null;
+                        render();
+                        break;
+                    case 'open-add-client-modal':
+                        openModal(renderAddClientModal());
+                        break;
+                    case 'open-add-note-modal':
+                        openModal(renderAddNoteModal(clientName));
+                        break;
+                    case 'open-add-goal-modal':
+                        openModal(renderAddGoalModal(clientName));
+                        break;
+                    case 'check-in':
+                        handleCheckIn(clientId);
+                        break;
+                    case 'check-out':
+                        handleCheckOut(clientId);
+                        break;
+                    case 'toggle-goal-details':
+                        const detailsEl = document.getElementById(targetId);
+                        const iconEl = target.querySelector('.goal-icon-chevron');
+                        if (detailsEl) {
+                            const isHidden = detailsEl.classList.toggle('hidden');
+                            iconEl.innerHTML = isHidden ? IconChevronRight({}).path : IconChevronDown({}).path;
+                        }
+                        break;
+                }
+            });
+            
+            appRoot.addEventListener('input', (e) => {
+                const target = e.target;
+                const action = target.dataset.action;
+                
+                if (action === 'search-dashboard') {
+                    state.dashboardSearchTerm = target.value;
+                    render();
+                }
+                if (action === 'search-clients') {
+                    state.searchTerm = target.value;
+                    render();
+                }
+            });
+            
+            appRoot.addEventListener('change', (e) => {
+                const target = e.target;
+                const action = target.dataset.action;
+                
+                if (action === 'update-goal-status') {
+                    const { clientId, goalId } = target.dataset;
+                    const newStatus = target.value;
+                    handleUpdateGoalStatus(clientId, goalId, newStatus);
+                }
+            });
+
+            // --- Modal Listeners ---
+            
+            modalContainer.addEventListener('click', (e) => {
+                const target = e.target.closest('[data-action]');
+                // Close modal if backdrop or a close button is clicked
+                if (target && (target.dataset.action === 'close-modal' || target.dataset.action === 'close-modal-backdrop')) {
+                     // Check if the click was on the backdrop itself, not a child
+                    if(target.dataset.action === 'close-modal-backdrop' && target.id !== 'modal-backdrop') {
+                        return;
+                    }
+                    closeModal();
+                }
+            });
+            
+            modalContainer.addEventListener('submit', (e) => {
+                e.preventDefault();
+                const form = e.target;
+                const formData = new FormData(form);
+                const data = Object.fromEntries(formData.entries());
+                const action = form.dataset.action;
+                const clientId = form.dataset.clientId;
+
+                switch (action) {
+                    case 'submit-add-client':
+                        handleAddNewClient(data);
+                        break;
+                    case 'submit-add-note':
+                        handleAddCaseNote(clientId, data.note);
+                        break;
+                    case 'submit-add-goal':
+                        handleAddGoal(clientId, data);
+                        break;
+                }
+            });
+
+            // --- 9. INITIALIZATION ---
+            state.isLoading = true;
+            render(); // Render login screen
+            state.isLoading = false;
+            // The login handler will load data and re-render the main app.
+        });
+    </script>
+</body>
+</html>
